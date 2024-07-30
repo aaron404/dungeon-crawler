@@ -1,8 +1,9 @@
-use std::{ffi::OsString, fs, path::Path};
+use std::{fs, path::Path};
 use xcap::image::{self, DynamicImage, GenericImageView};
 
 // Compute the squared error between two 4-byte pixels. Ignore
 // pixels that are not fully opaque.
+#[allow(dead_code)]
 fn compare_pixels(haystack: [u8; 4], needle: [u8; 4]) -> u64 {
     if needle[3] < 255 {
         0
@@ -17,6 +18,7 @@ fn compare_pixels(haystack: [u8; 4], needle: [u8; 4]) -> u64 {
 }
 
 // Compute sum of square error between two images at every offset, return position of lowest score
+#[allow(dead_code)]
 fn compare_images(haystack: &DynamicImage, needle: &DynamicImage) -> (u64, (u32, u32)) {
     let nw = needle.width();
     let nh = needle.height();
@@ -53,6 +55,7 @@ fn compare_images(haystack: &DynamicImage, needle: &DynamicImage) -> (u64, (u32,
 
 const TILES_OFFSET: (u32, u32) = (49, 175);
 const TILE_STRIDE: u32 = 33;
+#[allow(dead_code)]
 fn correct_offset(size: (u32, u32), offset: (u32, u32)) -> (i32, i32) {
     let center_x = size.0 / 2;
     let center_y = size.1 / 2;
@@ -73,6 +76,7 @@ fn correct_offset(size: (u32, u32), offset: (u32, u32)) -> (i32, i32) {
     )
 }
 
+#[allow(dead_code)]
 pub fn find_monster_offsets() {
     // Iterate over each monster image folder
     for dir in fs::read_dir("tokyo").unwrap() {
@@ -87,7 +91,7 @@ pub fn find_monster_offsets() {
         if let Ok(board) = image::open(board_path) {
             let mut best_score = u64::MAX;
             let mut best_pos = (0, 0);
-            let mut best_frame = OsString::new();
+            // let mut best_frame = OsString::new();
 
             let mut size = (0, 0);
             // Iterate over each frame to find best match
@@ -99,7 +103,7 @@ pub fn find_monster_offsets() {
                 if score < best_score {
                     best_score = score;
                     best_pos = pos;
-                    best_frame = frame.file_name();
+                    // best_frame = frame.file_name();
                 }
             }
             let offset = correct_offset(size, best_pos);

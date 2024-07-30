@@ -122,9 +122,9 @@ fn is_valid_solution(puzzle: &Puzzle, debug: bool) -> bool {
         (acc << 1) + if tile == Tile::Monster { 1 } else { 0 }
     });
 
-    let wall_mask = puzzle.tiles.as_flattened().iter().fold(0u64, |acc, &tile| {
-        (acc << 1) + if tile == Tile::Wall { 1 } else { 0 }
-    });
+    // let wall_mask = puzzle.tiles.as_flattened().iter().fold(0u64, |acc, &tile| {
+    //     (acc << 1) + if tile == Tile::Wall { 1 } else { 0 }
+    // });
 
     let treasure_mask = puzzle.tiles.as_flattened().iter().fold(0u64, |acc, &tile| {
         (acc << 1) + if tile == Tile::Treasure { 1 } else { 0 }

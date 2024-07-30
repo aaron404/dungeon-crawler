@@ -177,9 +177,11 @@ impl Puzzle {
         // Create mutable clone of the image view
         let mut img = img.to_image();
 
+        #[cfg(debug_assertions)]
         let mut hash: u64 = 0;
         for tile_y in 0..8 {
             for tile_x in 0..8 {
+                #[cfg(debug_assertions)]
                 let hash_bit = tile_y * 8 + tile_x;
                 let col = match self.tiles[tile_y][tile_x] {
                     Tile::Treasure => [0, 255, 0, 64],
@@ -187,6 +189,7 @@ impl Puzzle {
                     _ => [0, 0, 0, 0],
                 };
 
+                #[cfg(debug_assertions)]
                 if col != [0, 0, 0, 0] {
                     hash |= 1 << hash_bit;
                 }
