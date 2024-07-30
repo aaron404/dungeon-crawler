@@ -1,162 +1,172 @@
 #![feature(array_windows)]
+#![feature(array_chunks)]
+#![feature(iter_array_chunks)]
+#![feature(path_file_prefix)]
 
-use std::{thread, time::Duration};
+use std::{
+    collections::HashSet,
+    env,
+    fs::{self, OpenOptions},
+    io::{Cursor, Write},
+    path::Path,
+    process::exit,
+    thread,
+    time::{Duration, Instant},
+};
 
-use enigo::{Button, Coordinate, Direction, Enigo, InputResult, Mouse, Settings};
-use xcap::{image::GenericImageView, Window};
+mod dungeon_crawler;
+mod monster_search;
+mod puzzle;
+mod scripts;
+mod solve;
+mod tex;
+mod util;
 
-const GAME_TITLE: &str = "Last Call BBS";
-const GAME_CROP: (u32, u32) = (335, 459);
+use anyhow::Result;
+use puzzle::Puzzle;
+use solve::Solver;
 
-const CLICK_DELAY: u64 = 20;
+const DB_PATH: &str = "data";
+const DB_FILE: &str = "puzzles.db";
+const PUZZLES_PER_BATCH: usize = 4700;
+#[allow(dead_code)]
+fn collect_puzzles() -> Result<()> {
+    // Create db file if it doesn't exist
+    let db_path = Path::new(DB_PATH).join(DB_FILE);
+    if !db_path.exists() {
+        fs::create_dir_all(DB_PATH)?;
+    }
 
-type Image = xcap::image::ImageBuffer<xcap::image::Rgba<u8>, Vec<u8>>;
+    // Instantiate dungeon crawler and open db file in append mode
+    let mut dc = dungeon_crawler::DungeonCrawler::new()?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(db_path)
+        .expect("Database file should have been created");
 
-#[derive(Debug)]
-enum InitError {
-    BBSNotFound,
-    XCapError(xcap::XCapError),
-    EnigoError(enigo::NewConError),
-    MouseCaptureError(enigo::InputError),
-    ImageError(xcap::image::ImageError),
-    SearchError(SearchError),
+    // Create buffer to serialize puzzles into
+    let buffer = Vec::new();
+    let mut cursor = Cursor::new(buffer);
+
+    let t0 = Instant::now();
+
+    for _ in 0..PUZZLES_PER_BATCH {
+        dc.random_board();
+        let puzzle = dc.parse()?;
+        puzzle.serialize(&mut cursor)?;
+    }
+
+    // Append buffer to file
+    file.write_all(&cursor.into_inner())?;
+
+    let elapsed = t0.elapsed();
+    println!(
+        "{PUZZLES_PER_BATCH} parsed in {:.02}s. ({:.02}/s)",
+        elapsed.as_secs_f32(),
+        PUZZLES_PER_BATCH as f32 / elapsed.as_secs_f32()
+    );
+
+    Ok(())
 }
 
-#[derive(Debug)]
-enum SearchError {
-    NotFound,
-    MultipleResults(usize),
-    OutOfBounds,
+#[allow(dead_code)]
+fn read_puzzles() -> Result<Vec<Puzzle>> {
+    let db_path = Path::new(DB_PATH).join(DB_FILE);
+    let buffer = fs::read(db_path)?;
+
+    let puzzles = buffer
+        .array_chunks::<26>()
+        .map(|chunk| puzzle::Puzzle::deserialize(chunk))
+        .collect::<Result<Vec<puzzle::Puzzle>>>()?;
+
+    Ok(puzzles)
 }
 
-struct DungeonCrawler {
-    enigo: Enigo,
-    window: Window,
-    offset: (u32, u32),
-}
+#[allow(dead_code)]
+fn print_db_info() -> Result<()> {
+    let puzzles = read_puzzles()?;
 
-impl DungeonCrawler {
-    fn new() -> Result<Self, InitError> {
-        // Find 'Last Call BBS' window
-        let windows = Window::all().unwrap();
-        let window = windows
+    let seeds: HashSet<u32> = HashSet::from_iter(
+        puzzles
             .iter()
-            .find(|win| win.title() == GAME_TITLE)
-            .ok_or(InitError::BBSNotFound)?
-            .clone();
+            .map(|puzzle| puzzle.seed.unwrap_or(10000000u32)),
+    );
 
-        // Capture the screen
-        let img = window
-            .capture_image()
-            .map_err(|e| InitError::XCapError(e))?;
-        img.save("game.png").map_err(|e| InitError::ImageError(e))?;
+    println!("Puzzle database");
+    println!("  count: {}", puzzles.len());
+    println!("  unique: {}", seeds.len());
 
-        let dnd_offset = find_dnd_offset(&img).map_err(|e| InitError::SearchError(e))?;
-        img.view(dnd_offset.0, dnd_offset.1, GAME_CROP.0, GAME_CROP.1)
-            .to_image()
-            .save("dnd.png")
-            .map_err(|e| InitError::ImageError(e))?;
+    Ok(())
+}
 
-        let mut settings = Settings::default();
-        settings.linux_delay = 0;
-        // Locate DnD subwindow
-        let mut dc = Self {
-            enigo: Enigo::new(&settings).map_err(|e| InitError::EnigoError(e))?,
-            offset: (
-                window.x() as u32 + dnd_offset.0,
-                window.y() as u32 + dnd_offset.1,
-            ),
-            window,
-        };
+#[allow(dead_code)]
+fn parse() -> Result<()> {
+    let mut dc = dungeon_crawler::DungeonCrawler::new()?;
+    dc.parse()?;
+    Ok(())
+}
 
-        // Force a click to capture the mouse in the application
-        dc.click(0, 0)
-            .map_err(|e| InitError::MouseCaptureError(e))?;
+fn solve() -> Result<()> {
+    let mut dc = dungeon_crawler::DungeonCrawler::new()?;
+    let bt = solve::BackTracker {};
 
-        Ok(dc)
-    }
+    loop {
+        let puzzle = dc.parse()?;
+        println!("{puzzle}");
+        println!("seed: {:?}", puzzle.seed);
+        let solutions = bt.solve(&puzzle);
 
-    fn click(&mut self, x: u32, y: u32) -> InputResult<()> {
-        let cx = (x + self.offset.0) as i32;
-        let cy = (y + self.offset.1) as i32;
-        self.enigo.move_mouse(cx, cy, Coordinate::Abs)?;
-        thread::sleep(Duration::from_millis(CLICK_DELAY / 2));
-        self.enigo.button(Button::Left, Direction::Click)?;
-        thread::sleep(Duration::from_millis(CLICK_DELAY / 2));
-        Ok(())
+        // output dir
+        // let path = Path::new("script_output").join("solve_bt");
+        // let mut count = 0;
+        // for solution in solutions.into_iter().step_by(5000) {
+        // for solution in solutions.into_iter() {
+        // dc.enter_solution(solution)?;
+        // dc.save_board_image(None, &path.join(format!("{count:>04}.png")))?;
+        // dc.reset_solution()?;
+        // count += 1;
+        // }
+
+        match solutions.len() {
+            0 => println!("  no solution"),
+            1 => {
+                dc.enter_solution(*solutions.last().unwrap()).unwrap();
+            }
+            _ => {
+                println!("  multiple solutions");
+                for sol in solutions {
+                    println!("    {:064b}", sol);
+                }
+            }
+        }
+
+        thread::sleep(Duration::from_millis(2500));
+        dc.random_board()
     }
 }
 
-fn find_dnd_offset(image: &Image) -> Result<(u32, u32), SearchError> {
-    // Pattern of image bytes to uniquely locate the DnD subwindow. The chosen pattern
-    // exists at 299,0 relative to the top left corner of the subwindow.
-    const PATTERN_LEN: usize = 12;
-    const PATTERN: [u8; PATTERN_LEN] = [69, 52, 56, 255, 237, 169, 135, 255, 181, 147, 131, 255];
-    const PATTERN_OFFSET: (u32, u32) = (299, 0);
-
-    // Iterate over sliding window of 12 bytes, considering only every 4th window (pixel alignment)
-    let matches = image
-        .array_windows::<PATTERN_LEN>()
-        .step_by(4)
-        .enumerate()
-        .filter_map(|(i, &chunk)| {
-            if chunk == PATTERN {
-                // Given the window index, calculate x and y offsets. Wrapping
-                // subtraction here simplifies the bounds check later
-                Some((
-                    (i as u32 % image.width()).wrapping_sub(PATTERN_OFFSET.0),
-                    (i as u32 / image.width()).wrapping_sub(PATTERN_OFFSET.1),
-                ))
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<(u32, u32)>>();
-
-    use SearchError::*;
-    match matches.len() {
-        0 => Err(NotFound),
-        1 => {
-            let (x, y) = matches[0];
-            if x > 625 || y > 80 {
-                Err(OutOfBounds)
-            } else {
-                Ok(matches[0])
-            }
-        }
-        n => Err(MultipleResults(n)),
+fn main() -> Result<()> {
+    if env::args().count() > 1 {
+        tex::decode_all_textures();
+        exit(0);
     }
+
+    // parse()?;
+    // collect_puzzles()?;
+    // print_db_info()?;
+    // do_stuff();
+
+    solve()?;
+
+    Ok(())
 }
 
-fn main() {
-    let mut dc = match DungeonCrawler::new() {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("Error: {:#?}", e);
-            std::process::exit(1)
-        }
-    };
-
-    println!("offset: {:?}", dc.offset);
-
-    // repeat 5 times
-    use rand::seq::SliceRandom;
-    use rand::thread_rng;
-    for _ in 0..8 {
-        let mut coords = Vec::new();
-        for i in 0..8 {
-            for j in 0..8 {
-                let cx = i * 33 + 66;
-                let cy = j * 33 + 191;
-                coords.push((cx, cy));
-            }
-        }
-        coords.shuffle(&mut thread_rng());
-
-        for (cx, cy) in coords {
-            dc.click(cx, cy).unwrap();
-        }
-
-        thread::sleep(Duration::from_millis(250));
-    }
+#[allow(dead_code)]
+fn do_stuff() {
+    // scripts::get_large_digit_discriminant();
+    // scripts::tile_bg_colors();
+    // scripts::find_monster_sample_offset();
+    // scripts::print_background_pixels();
 }

@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.86"
+byteorder = "1.5.0"
 enigo = { version = "0.2.1", features = ["x11rb"] }
+lz4_flex = "0.11.3"
 rand = "0.8.5"
+test-case = "3.3.1"
+thiserror = "1.0.61"
+walkdir = "2.5.0"
 xcap = "0.0.10"
